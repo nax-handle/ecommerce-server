@@ -1,5 +1,9 @@
 using Toxos_V2.Models;
 using Toxos_V2.Services;
+using DotNetEnv;
+
+// Load environment variables from .env file
+Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
