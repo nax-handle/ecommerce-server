@@ -1,5 +1,5 @@
 namespace Toxos_V2.Models;
-
+ 
 public class MongoDBSettings
 {
     public string ConnectionString { get; set; } = string.Empty;

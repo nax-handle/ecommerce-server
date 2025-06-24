@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Driver;
 
 namespace Toxos_V2.Models;
 
@@ -10,6 +11,7 @@ public class User
     public string? Id { get; set; }
 
     [BsonElement("phone")]
+    [BsonRequired]
     public required string Phone { get; set; }
 
     [BsonElement("point")]
