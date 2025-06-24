@@ -82,6 +82,9 @@ public class ProductVariant
     [BsonElement("color_rgb")]
     public int ColorRGB { get; set; }
 
+    [BsonElement("stock_quantity")]
+    public int StockQuantity { get; set; } = 0;
+
     [BsonElement("sold_quantity")]
     public int SoldQuantity { get; set; } = 0;
 

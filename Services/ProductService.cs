@@ -9,11 +9,13 @@ public class ProductService
 {
     private readonly IMongoCollection<Product> _products;
     private readonly IMongoCollection<Category> _categories;
+    private readonly CloudinaryFileUploadService _fileUploadService;
 
-    public ProductService(MongoDBService mongoDBService)
+    public ProductService(MongoDBService mongoDBService, CloudinaryFileUploadService fileUploadService)
     {
         _products = mongoDBService.GetCollection<Product>("products");
         _categories = mongoDBService.GetCollection<Category>("categories");
+        _fileUploadService = fileUploadService;
     }
 
     // User endpoints with pagination
@@ -123,18 +125,33 @@ public class ProductService
             throw new ArgumentException("Category does not exist");
         }
 
-        // Check if product with same slug already exists
-        var existingProduct = await _products.Find(x => x.Slug == createProductDto.Slug).FirstOrDefaultAsync();
-        if (existingProduct != null)
+        // Auto-generate slug if not provided
+        var slug = string.IsNullOrEmpty(createProductDto.Slug) 
+            ? CloudinaryFileUploadService.GenerateSlug(createProductDto.Name)
+            : CloudinaryFileUploadService.GenerateSlug(createProductDto.Slug);
+
+        // Ensure slug is unique
+        slug = await GenerateUniqueSlugAsync(slug);
+
+        // Upload thumbnail if provided
+        string? thumbnailPath = null;
+        if (createProductDto.ThumbnailFile != null)
         {
-            throw new ArgumentException("Product with this slug already exists");
+            thumbnailPath = await _fileUploadService.UploadThumbnailAsync(createProductDto.ThumbnailFile);
+        }
+
+        // Upload images if provided
+        var imagePaths = new List<string>();
+        if (createProductDto.ImageFiles != null && createProductDto.ImageFiles.Any())
+        {
+            imagePaths = await _fileUploadService.UploadProductImagesAsync(createProductDto.ImageFiles);
         }
 
         var product = new Product
         {
             Name = createProductDto.Name,
-            Slug = createProductDto.Slug,
-            Thumbnail = createProductDto.Thumbnail,
+            Slug = slug,
+            Thumbnail = thumbnailPath,
             Screen = createProductDto.Screen,
             GraphicCard = createProductDto.GraphicCard,
             Connector = createProductDto.Connector,
@@ -145,7 +162,7 @@ public class ProductService
             Pin = createProductDto.Pin,
             CategoryId = createProductDto.CategoryId,
             Variants = createProductDto.Variants.Select(MapToProductVariant).ToList(),
-            Images = createProductDto.Images.Select(MapToProductImage).ToList(),
+            Images = imagePaths.Select(path => new ProductImage { Image = path, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow }).ToList(),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -156,6 +173,13 @@ public class ProductService
 
     public async Task<ProductAdminDto?> UpdateProductAsync(string id, UpdateProductDto updateProductDto)
     {
+        // Get existing product
+        var existingProduct = await _products.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (existingProduct == null)
+        {
+            return null;
+        }
+
         // Validate category exists
         var categoryExists = await _categories.Find(x => x.Id == updateProductDto.CategoryId).AnyAsync();
         if (!categoryExists)
@@ -163,17 +187,45 @@ public class ProductService
             throw new ArgumentException("Category does not exist");
         }
 
-        // Check if another product with same slug exists
-        var existingProduct = await _products.Find(x => x.Slug == updateProductDto.Slug && x.Id != id).FirstOrDefaultAsync();
-        if (existingProduct != null)
+        // Auto-generate slug if not provided or if name changed
+        var slug = string.IsNullOrEmpty(updateProductDto.Slug) 
+            ? CloudinaryFileUploadService.GenerateSlug(updateProductDto.Name)
+            : CloudinaryFileUploadService.GenerateSlug(updateProductDto.Slug);
+
+        // Ensure slug is unique (excluding current product)
+        if (slug != existingProduct.Slug)
         {
-            throw new ArgumentException("Product with this slug already exists");
+            slug = await GenerateUniqueSlugAsync(slug, id);
+        }
+
+        // Handle thumbnail upload
+        string? thumbnailPath = existingProduct.Thumbnail;
+        if (updateProductDto.ThumbnailFile != null)
+        {
+            // Delete old thumbnail if exists
+            if (!string.IsNullOrEmpty(existingProduct.Thumbnail))
+            {
+                await _fileUploadService.DeleteFileAsync(existingProduct.Thumbnail);
+            }
+            
+            thumbnailPath = await _fileUploadService.UploadThumbnailAsync(updateProductDto.ThumbnailFile);
+        }
+
+        // Handle images upload
+        var imagePaths = existingProduct.Images.Select(img => img.Image).ToList();
+        if (updateProductDto.ImageFiles != null && updateProductDto.ImageFiles.Any())
+        {
+            // Delete old images
+            await _fileUploadService.DeleteMultipleFilesAsync(imagePaths);
+            
+            // Upload new images
+            imagePaths = await _fileUploadService.UploadProductImagesAsync(updateProductDto.ImageFiles);
         }
 
         var updateDefinition = Builders<Product>.Update
             .Set(x => x.Name, updateProductDto.Name)
-            .Set(x => x.Slug, updateProductDto.Slug)
-            .Set(x => x.Thumbnail, updateProductDto.Thumbnail)
+            .Set(x => x.Slug, slug)
+            .Set(x => x.Thumbnail, thumbnailPath)
             .Set(x => x.Screen, updateProductDto.Screen)
             .Set(x => x.GraphicCard, updateProductDto.GraphicCard)
             .Set(x => x.Connector, updateProductDto.Connector)
@@ -184,7 +236,7 @@ public class ProductService
             .Set(x => x.Pin, updateProductDto.Pin)
             .Set(x => x.CategoryId, updateProductDto.CategoryId)
             .Set(x => x.Variants, updateProductDto.Variants.Select(MapToProductVariant).ToList())
-            .Set(x => x.Images, updateProductDto.Images.Select(MapToProductImage).ToList())
+            .Set(x => x.Images, imagePaths.Select(path => new ProductImage { Image = path, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow }).ToList())
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         var result = await _products.UpdateOneAsync(x => x.Id == id, updateDefinition);
@@ -200,6 +252,25 @@ public class ProductService
 
     public async Task<bool> DeleteProductAsync(string id)
     {
+        // Get product to delete associated files
+        var product = await _products.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (product == null)
+        {
+            return false;
+        }
+
+        // Delete associated files
+        if (!string.IsNullOrEmpty(product.Thumbnail))
+        {
+            await _fileUploadService.DeleteFileAsync(product.Thumbnail);
+        }
+
+        var imagePaths = product.Images.Select(img => img.Image).ToList();
+        if (imagePaths.Any())
+        {
+            await _fileUploadService.DeleteMultipleFilesAsync(imagePaths);
+        }
+
         var result = await _products.DeleteOneAsync(x => x.Id == id);
         return result.DeletedCount > 0;
     }
@@ -211,6 +282,36 @@ public class ProductService
     }
 
     // Helper methods
+    private async Task<string> GenerateUniqueSlugAsync(string baseSlug, string? excludeId = null)
+    {
+        var slug = baseSlug;
+        var counter = 1;
+
+        while (await SlugExistsAsync(slug, excludeId))
+        {
+            slug = $"{baseSlug}-{counter}";
+            counter++;
+        }
+
+        return slug;
+    }
+
+    private async Task<bool> SlugExistsAsync(string slug, string? excludeId = null)
+    {
+        var filter = Builders<Product>.Filter.Eq(x => x.Slug, slug);
+        
+        if (!string.IsNullOrEmpty(excludeId))
+        {
+            filter = Builders<Product>.Filter.And(
+                filter,
+                Builders<Product>.Filter.Ne(x => x.Id, excludeId)
+            );
+        }
+
+        var count = await _products.CountDocumentsAsync(filter);
+        return count > 0;
+    }
+
     private FilterDefinition<Product> BuildSearchFilter(PaginationRequest request)
     {
         var filterBuilder = Builders<Product>.Filter;
@@ -353,16 +454,6 @@ public class ProductService
             CPU = variantDto.CPU,
             Price = variantDto.Price,
             ColorRGB = variantDto.ColorRGB,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
-        };
-    }
-
-    private ProductImage MapToProductImage(ProductImageDto imageDto)
-    {
-        return new ProductImage
-        {
-            Image = imageDto.Image,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };

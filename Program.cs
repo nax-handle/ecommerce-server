@@ -15,6 +15,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<MongoDBSettings>(
     builder.Configuration.GetSection("MongoDB"));
 
+// Configure Cloudinary settings
+builder.Services.Configure<CloudinarySettings>(
+    builder.Configuration.GetSection("Cloudinary"));
+
 // Add MongoDB service
 builder.Services.AddSingleton<MongoDBService>();
 
@@ -26,6 +30,9 @@ builder.Services.AddScoped<CategoryService>();
 
 // Add Product service
 builder.Services.AddScoped<ProductService>();
+
+// Add Cloudinary File Upload service
+builder.Services.AddScoped<CloudinaryFileUploadService>();
 
 // Add JWT Authentication
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");

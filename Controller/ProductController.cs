@@ -157,17 +157,18 @@ public class ProductController : ControllerBase
 
     [HttpPost]
     [RequireAdmin]
+    [Consumes("multipart/form-data")]
     [SwaggerOperation(
         Summary = "Create product",
-        Description = "Creates a new product with variants and images. Requires admin privileges.",
+        Description = "Creates a new product with file uploads for thumbnail and images. Slug is auto-generated from name if not provided. Requires admin privileges.",
         OperationId = "CreateProduct"
     )]
     [SwaggerResponse(201, "Product created successfully", typeof(ProductAdminDto))]
-    [SwaggerResponse(400, "Bad request - Invalid data, category doesn't exist, or slug already exists", typeof(object))]
+    [SwaggerResponse(400, "Bad request - Invalid data, category doesn't exist, file validation failed", typeof(object))]
     [SwaggerResponse(401, "Unauthorized - Authentication required", typeof(object))]
     [SwaggerResponse(403, "Forbidden - Admin privileges required", typeof(object))]
     [SwaggerResponse(500, "Internal server error", typeof(object))]
-    public async Task<ActionResult<ProductAdminDto>> CreateProduct(CreateProductDto createProductDto)
+    public async Task<ActionResult<ProductAdminDto>> CreateProduct([FromForm] CreateProductDto createProductDto)
     {
         try
         {
@@ -186,18 +187,19 @@ public class ProductController : ControllerBase
 
     [HttpPut("{id}")]
     [RequireAdmin]
+    [Consumes("multipart/form-data")]
     [SwaggerOperation(
         Summary = "Update product",
-        Description = "Updates an existing product with new information, variants, and images. Requires admin privileges.",
+        Description = "Updates an existing product with optional file uploads for thumbnail and images. Slug is auto-generated from name if not provided. Requires admin privileges.",
         OperationId = "UpdateProduct"
     )]
     [SwaggerResponse(200, "Product updated successfully", typeof(ProductAdminDto))]
-    [SwaggerResponse(400, "Bad request - Invalid data, category doesn't exist, or slug already exists", typeof(object))]
+    [SwaggerResponse(400, "Bad request - Invalid data, category doesn't exist, file validation failed", typeof(object))]
     [SwaggerResponse(401, "Unauthorized - Authentication required", typeof(object))]
     [SwaggerResponse(403, "Forbidden - Admin privileges required", typeof(object))]
     [SwaggerResponse(404, "Product not found", typeof(object))]
     [SwaggerResponse(500, "Internal server error", typeof(object))]
-    public async Task<ActionResult<ProductAdminDto>> UpdateProduct(string id, UpdateProductDto updateProductDto)
+    public async Task<ActionResult<ProductAdminDto>> UpdateProduct(string id, [FromForm] UpdateProductDto updateProductDto)
     {
         try
         {
