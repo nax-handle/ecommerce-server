@@ -31,6 +31,9 @@ builder.Services.AddScoped<CategoryService>();
 // Add Product service
 builder.Services.AddScoped<ProductService>();
 
+// Add Order service
+builder.Services.AddScoped<OrderService>();
+
 // Add Cloudinary File Upload service
 builder.Services.AddScoped<CloudinaryFileUploadService>();
 
