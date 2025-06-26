@@ -49,8 +49,7 @@ public class Product
     [BsonElement("rating")]
     public decimal Rating { get; set; } = 0;
 
-    [BsonElement("variants")]
-    public List<ProductVariant> Variants { get; set; } = new List<ProductVariant>();
+    // Variants are now stored in a separate collection and referenced by ProductId
 
     [BsonElement("images")]
     public List<ProductImage> Images { get; set; } = new List<ProductImage>();
@@ -64,6 +63,14 @@ public class Product
 
 public class ProductVariant
 {
+    [BsonId]
+    [BsonRepresentation(BsonType.ObjectId)]
+    public string? Id { get; set; }
+
+    [BsonElement("product_id")]
+    [BsonRepresentation(BsonType.ObjectId)]
+    public required string ProductId { get; set; }
+
     [BsonElement("discount")]
     public int Discount { get; set; } = 0;
 

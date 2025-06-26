@@ -27,6 +27,9 @@ public class Voucher
     [BsonElement("min_value")]
     public int MinValue { get; set; } = 0;
 
+    [BsonElement("amount")]
+    public int Amount { get; set; } = 1;
+
     [BsonElement("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

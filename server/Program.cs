@@ -34,6 +34,9 @@ builder.Services.AddScoped<CategoryService>();
 // Add Product service
 builder.Services.AddScoped<ProductService>();
 
+// Add Product Variant service
+builder.Services.AddScoped<ProductVariantService>();
+
 // Add Order service
 builder.Services.AddScoped<OrderService>();
 

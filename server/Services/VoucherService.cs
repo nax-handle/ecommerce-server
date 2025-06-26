@@ -8,13 +8,13 @@ public class VoucherService
 {
     private readonly IMongoCollection<Voucher> _vouchers;
     private readonly CloudinaryFileUploadService _fileUploadService;
-    private readonly OrderService _orderService;
+    private readonly ProductVariantService _productVariantService;
 
-    public VoucherService(MongoDBService mongoDBService, CloudinaryFileUploadService fileUploadService, OrderService orderService)
+    public VoucherService(MongoDBService mongoDBService, CloudinaryFileUploadService fileUploadService, ProductVariantService productVariantService)
     {
         _vouchers = mongoDBService.GetCollection<Voucher>("vouchers");
         _fileUploadService = fileUploadService;
-        _orderService = orderService;
+        _productVariantService = productVariantService;
     }
 
     // User endpoints - Get available vouchers
@@ -53,7 +53,7 @@ public class VoucherService
         return voucher != null ? MapToVoucherDetailDto(voucher) : null;
     }
 
-    // User endpoint - Apply voucher to order
+    // User endpoint - Apply voucher to cart/order
     public async Task<VoucherApplicationResultDto> ApplyVoucherAsync(ApplyVoucherDto applyVoucherDto)
     {
         // Get voucher by name
@@ -70,27 +70,51 @@ public class VoucherService
             };
         }
 
-        // Get order by id and get total price
-        var order = await _orderService.GetOrderByIdForAdminAsync(applyVoucherDto.OrderId);
-        if (order == null)
+        // Check if voucher is still available
+        if (voucher.Amount <= 0)
         {
             return new VoucherApplicationResultDto
             {
                 IsValid = false,
-                Message = "Order not found",
+                Message = "Voucher is no longer available",
                 DiscountAmount = 0,
                 FinalTotal = 0
             };
         }
 
-        int orderTotal = order.TotalPrice;
+        // Calculate total price from variant IDs
+        int orderTotal = 0;
+
+        foreach (var item in applyVoucherDto.Items)
+        {
+            var variant = await _productVariantService.GetVariantByIdAsync(item.VariantId);
+            if (variant == null)
+            {
+                return new VoucherApplicationResultDto
+                {
+                    IsValid = false,
+                    Message = $"Variant with ID {item.VariantId} not found",
+                    DiscountAmount = 0,
+                    FinalTotal = 0
+                };
+            }
+
+            // Calculate price (apply variant discount if any)
+            int unitPrice = variant.Price;
+            if (variant.Discount > 0)
+            {
+                unitPrice = unitPrice - (unitPrice * variant.Discount / 100);
+            }
+
+            orderTotal += unitPrice * item.Quantity;
+        }
 
         if (orderTotal < voucher.MinValue)
         {
             return new VoucherApplicationResultDto
             {
                 IsValid = false,
-                Message = $"Order total must be at least {voucher.MinValue:C} to use this voucher",
+                Message = $"Order total must be at least {voucher.MinValue} to use this voucher",
                 DiscountAmount = 0,
                 FinalTotal = orderTotal,
                 Voucher = MapToVoucherDetailDto(voucher)
@@ -175,6 +199,7 @@ public class VoucherService
             Discount = createVoucherDto.Discount,
             Description = createVoucherDto.Description,
             MinValue = createVoucherDto.MinValue,
+            Amount = createVoucherDto.Amount,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -211,6 +236,7 @@ public class VoucherService
             .Set(x => x.Discount, updateVoucherDto.Discount)
             .Set(x => x.Description, updateVoucherDto.Description)
             .Set(x => x.MinValue, updateVoucherDto.MinValue)
+            .Set(x => x.Amount, updateVoucherDto.Amount)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _vouchers.UpdateOneAsync(x => x.Id == id, updateDefinition);
@@ -264,6 +290,22 @@ public class VoucherService
         };
     }
 
+    // Method to decrease voucher amount when used
+    public async Task<bool> DecreaseVoucherAmountAsync(string voucherId)
+    {
+        var filter = Builders<Voucher>.Filter.And(
+            Builders<Voucher>.Filter.Eq(x => x.Id, voucherId),
+            Builders<Voucher>.Filter.Gt(x => x.Amount, 0)
+        );
+
+        var update = Builders<Voucher>.Update
+            .Inc(x => x.Amount, -1)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        var result = await _vouchers.UpdateOneAsync(filter, update);
+        return result.ModifiedCount > 0;
+    }
+
     // Mapping methods
     private VoucherListDto MapToVoucherListDto(Voucher voucher)
     {
@@ -275,7 +317,8 @@ public class VoucherService
             Image = voucher.Image,
             Discount = voucher.Discount,
             Description = voucher.Description,
-            MinValue = voucher.MinValue
+            MinValue = voucher.MinValue,
+            Amount = voucher.Amount
         };
     }
 
@@ -290,6 +333,7 @@ public class VoucherService
             Discount = voucher.Discount,
             Description = voucher.Description,
             MinValue = voucher.MinValue,
+            Amount = voucher.Amount,
             CreatedAt = voucher.CreatedAt,
             UpdatedAt = voucher.UpdatedAt
         };
@@ -306,6 +350,7 @@ public class VoucherService
             Discount = voucher.Discount,
             Description = voucher.Description,
             MinValue = voucher.MinValue,
+            Amount = voucher.Amount,
             CreatedAt = voucher.CreatedAt,
             UpdatedAt = voucher.UpdatedAt
         };

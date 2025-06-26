@@ -13,6 +13,7 @@ public class VoucherListDto
     public int Discount { get; set; }
     public string? Description { get; set; }
     public int MinValue { get; set; }
+    public int Amount { get; set; }
 }
 
 public class VoucherDetailDto
@@ -24,6 +25,7 @@ public class VoucherDetailDto
     public int Discount { get; set; }
     public string? Description { get; set; }
     public int MinValue { get; set; }
+    public int Amount { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -38,6 +40,7 @@ public class VoucherAdminDto
     public int Discount { get; set; }
     public string? Description { get; set; }
     public int MinValue { get; set; }
+    public int Amount { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -63,6 +66,9 @@ public class CreateVoucherDto
 
     [Range(0, int.MaxValue, ErrorMessage = "MinValue must be a positive number")]
     public int MinValue { get; set; } = 0;
+
+    [Range(1, int.MaxValue, ErrorMessage = "Amount must be at least 1")]
+    public int Amount { get; set; } = 1;
 }
 
 public class UpdateVoucherDto
@@ -85,6 +91,9 @@ public class UpdateVoucherDto
 
     [Range(0, int.MaxValue, ErrorMessage = "MinValue must be a positive number")]
     public int MinValue { get; set; } = 0;
+
+    [Range(1, int.MaxValue, ErrorMessage = "Amount must be at least 1")]
+    public int Amount { get; set; } = 1;
 }
 
 // DTO for voucher application by users
@@ -93,8 +102,19 @@ public class ApplyVoucherDto
     [Required]
     public required string VoucherName { get; set; }
 
+    // List of variant IDs to calculate total from
     [Required]
-    public required string OrderId { get; set; }
+    public required List<VoucherCartItemDto> Items { get; set; }
+}
+
+// DTO for cart items when applying voucher
+public class VoucherCartItemDto
+{
+    [Required]
+    public required string VariantId { get; set; }
+    
+    [Range(1, int.MaxValue)]
+    public int Quantity { get; set; }
 }
 
 // DTO for voucher application response

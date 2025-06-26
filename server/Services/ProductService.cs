@@ -10,12 +10,14 @@ public class ProductService
     private readonly IMongoCollection<Product> _products;
     private readonly IMongoCollection<Category> _categories;
     private readonly CloudinaryFileUploadService _fileUploadService;
+    private readonly ProductVariantService _productVariantService;
 
-    public ProductService(MongoDBService mongoDBService, CloudinaryFileUploadService fileUploadService)
+    public ProductService(MongoDBService mongoDBService, CloudinaryFileUploadService fileUploadService, ProductVariantService productVariantService)
     {
         _products = mongoDBService.GetCollection<Product>("products");
         _categories = mongoDBService.GetCollection<Category>("categories");
         _fileUploadService = fileUploadService;
+        _productVariantService = productVariantService;
     }
 
     // User endpoints with pagination
@@ -34,7 +36,11 @@ public class ProductService
             .Limit(request.PageSize)
             .ToListAsync();
 
-        var productDtos = products.Select(MapToProductListDto).ToList();
+        var productDtos = new List<ProductListDto>();
+        foreach (var product in products)
+        {
+            productDtos.Add(await MapToProductListDtoAsync(product));
+        }
 
         return new PaginatedResponse<ProductListDto>
         {
@@ -54,10 +60,7 @@ public class ProductService
         if (product == null) return null;
 
         // Increment view count for all variants
-        var updateDefinition = Builders<Product>.Update
-            .Inc("variants.$[].view_quantity", 1);
-
-        await _products.UpdateOneAsync(x => x.Id == id, updateDefinition);
+        await _productVariantService.IncrementViewCountAsync(id);
 
         return await MapToProductDetailDto(product);
     }
@@ -68,10 +71,7 @@ public class ProductService
         if (product == null) return null;
 
         // Increment view count for all variants
-        var updateDefinition = Builders<Product>.Update
-            .Inc("variants.$[].view_quantity", 1);
-
-        await _products.UpdateOneAsync(x => x.Id == product.Id, updateDefinition);
+        await _productVariantService.IncrementViewCountAsync(product.Id!);
 
         return await MapToProductDetailDto(product);
     }
@@ -161,13 +161,19 @@ public class ProductService
             Mass = createProductDto.Mass,
             Pin = createProductDto.Pin,
             CategoryId = createProductDto.CategoryId,
-            Variants = createProductDto.Variants.Select(MapToProductVariant).ToList(),
             Images = imagePaths.Select(path => new ProductImage { Image = path, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow }).ToList(),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
 
         await _products.InsertOneAsync(product);
+
+        // Create variants in separate collection
+        foreach (var variantDto in createProductDto.Variants)
+        {
+            await _productVariantService.CreateVariantAsync(product.Id!, variantDto);
+        }
+
         return await MapToProductAdminDto(product);
     }
 
@@ -235,11 +241,13 @@ public class ProductService
             .Set(x => x.Mass, updateProductDto.Mass)
             .Set(x => x.Pin, updateProductDto.Pin)
             .Set(x => x.CategoryId, updateProductDto.CategoryId)
-            .Set(x => x.Variants, updateProductDto.Variants.Select(MapToProductVariant).ToList())
             .Set(x => x.Images, imagePaths.Select(path => new ProductImage { Image = path, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow }).ToList())
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         var result = await _products.UpdateOneAsync(x => x.Id == id, updateDefinition);
+
+        // Note: Variants are now managed separately through ProductVariantService
+        // If you need to update variants, use the ProductVariantController endpoints
         
         if (result.MatchedCount == 0)
         {
@@ -280,6 +288,9 @@ public class ProductService
         var count = await _products.CountDocumentsAsync(x => x.Id == id);
         return count > 0;
     }
+
+    // Note: Variant management methods have been moved to ProductVariantService
+    // Use ProductVariantController endpoints for variant operations
 
     // Helper methods
     private async Task<string> GenerateUniqueSlugAsync(string baseSlug, string? excludeId = null)
@@ -348,10 +359,11 @@ public class ProductService
         };
     }
 
-    private ProductListDto MapToProductListDto(Product product)
+    private async Task<ProductListDto> MapToProductListDtoAsync(Product product)
     {
-        var prices = product.Variants.Where(v => v.Price > 0).Select(v => v.Price).ToList();
-        var discounts = product.Variants.Where(v => v.Discount > 0).Select(v => v.Discount).ToList();
+        var variants = await _productVariantService.GetVariantsByProductIdAsync(product.Id!);
+        var prices = variants.Where(v => v.Price > 0).Select(v => v.Price).ToList();
+        var discounts = variants.Where(v => v.Discount > 0).Select(v => v.Discount).ToList();
 
         return new ProductListDto
         {
@@ -370,6 +382,7 @@ public class ProductService
     private async Task<ProductDetailDto> MapToProductDetailDto(Product product)
     {
         var category = await _categories.Find(x => x.Id == product.CategoryId).FirstOrDefaultAsync();
+        var variants = await _productVariantService.GetVariantsByProductIdAsync(product.Id!);
 
         return new ProductDetailDto
         {
@@ -388,7 +401,7 @@ public class ProductService
             CategoryId = product.CategoryId,
             CategoryName = category?.Name,
             Rating = product.Rating,
-            Variants = product.Variants.Select(MapToProductVariantDto).ToList(),
+            Variants = variants,
             Images = product.Images.Select(MapToProductImageDto).ToList()
         };
     }
@@ -396,6 +409,7 @@ public class ProductService
     private async Task<ProductAdminDto> MapToProductAdminDto(Product product)
     {
         var category = await _categories.Find(x => x.Id == product.CategoryId).FirstOrDefaultAsync();
+        var variants = await _productVariantService.GetVariantsByProductIdAsync(product.Id!);
 
         return new ProductAdminDto
         {
@@ -414,25 +428,10 @@ public class ProductService
             CategoryId = product.CategoryId,
             CategoryName = category?.Name,
             Rating = product.Rating,
-            Variants = product.Variants.Select(MapToProductVariantDto).ToList(),
+            Variants = variants,
             Images = product.Images.Select(MapToProductImageDto).ToList(),
             CreatedAt = product.CreatedAt,
             UpdatedAt = product.UpdatedAt
-        };
-    }
-
-    private ProductVariantDto MapToProductVariantDto(ProductVariant variant)
-    {
-        return new ProductVariantDto
-        {
-            Discount = variant.Discount,
-            HardDrive = variant.HardDrive,
-            RAM = variant.RAM,
-            CPU = variant.CPU,
-            Price = variant.Price,
-            ColorRGB = variant.ColorRGB,
-            SoldQuantity = variant.SoldQuantity,
-            ViewQuantity = variant.ViewQuantity
         };
     }
 
@@ -441,21 +440,6 @@ public class ProductService
         return new ProductImageDto
         {
             Image = image.Image
-        };
-    }
-
-    private ProductVariant MapToProductVariant(CreateProductVariantDto variantDto)
-    {
-        return new ProductVariant
-        {
-            Discount = variantDto.Discount,
-            HardDrive = variantDto.HardDrive,
-            RAM = variantDto.RAM,
-            CPU = variantDto.CPU,
-            Price = variantDto.Price,
-            ColorRGB = variantDto.ColorRGB,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
         };
     }
 } 

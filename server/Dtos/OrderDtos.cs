@@ -43,13 +43,12 @@ public class CreateOrderDto
 public class CreateOrderItemDto
 {
     [Required]
-    public required string ProductId { get; set; }
+    public required string VariantId { get; set; }
 
     [Range(1, int.MaxValue)]
     public int Quantity { get; set; }
 
-    // Optional: specific variant selection (for future use)
-    public int? VariantIndex { get; set; }
+    public DateTime? Deadline { get; set; }
 }
 
 // Order response DTOs
@@ -73,6 +72,7 @@ public class OrderDto
 public class OrderItemDto
 {
     public required string ProductId { get; set; }
+    public required string VariantId { get; set; }
     public required string ProductName { get; set; }
     public string? ProductThumbnail { get; set; }
     public int Price { get; set; }
@@ -115,6 +115,7 @@ public class AdminOrderDto
 public class AdminOrderItemDto
 {
     public required string ProductId { get; set; }
+    public required string VariantId { get; set; }
     public required string ProductName { get; set; }
     public string? ProductThumbnail { get; set; }
     public required string ProductSlug { get; set; }

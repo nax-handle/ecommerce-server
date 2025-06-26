@@ -150,49 +150,6 @@ public class AuthController : ControllerBase
         {
             return StatusCode(500, new { message = "An error occurred while fetching profile", error = ex.Message });
         }
-    }
 
-    [HttpPost("admin/validate")]
-    [RequireAdmin]
-    [SwaggerOperation(
-        Summary = "Validate admin token",
-        Description = "Validates if the current token belongs to an admin user. Returns admin user information.",
-        OperationId = "ValidateAdminToken"
-    )]
-    [SwaggerResponse(200, "Admin token is valid", typeof(UserDto))]
-    [SwaggerResponse(401, "Unauthorized - Authentication required", typeof(object))]
-    [SwaggerResponse(403, "Forbidden - Admin privileges required", typeof(object))]
-    public async Task<ActionResult<UserDto>> ValidateAdminToken()
-    {
-        try
-        {
-            var currentUser = HttpContext.GetCurrentUser();
-            
-            if (currentUser == null)
-            {
-                return Unauthorized(new { message = "User not found" });
-            }
-
-            var userDto = new UserDto
-            {
-                Id = currentUser.Id!,
-                Phone = currentUser.Phone,
-                FullName = currentUser.FullName,
-                Gender = currentUser.Gender,
-                Address = currentUser.Address,
-                Point = currentUser.Point,
-                Roles = currentUser.Roles
-            };
-
-            return Ok(new { 
-                message = "Admin token is valid", 
-                user = userDto,
-                isAdmin = true
-            });
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(500, new { message = "An error occurred while validating admin token", error = ex.Message });
-        }
     }
 } 

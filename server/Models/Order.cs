@@ -45,6 +45,10 @@ public class OrderDetail
     [BsonRepresentation(BsonType.ObjectId)]
     public required string ProductId { get; set; }
 
+    [BsonElement("variant_id")]
+    [BsonRepresentation(BsonType.ObjectId)]
+    public required string VariantId { get; set; }
+
     [BsonElement("price")]
     public int Price { get; set; }
 

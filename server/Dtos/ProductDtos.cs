@@ -34,12 +34,15 @@ public class PaginatedResponse<T>
 // Product variant DTOs
 public class ProductVariantDto
 {
+    public required string Id { get; set; }
+    public required string ProductId { get; set; }
     public int Discount { get; set; }
     public string? HardDrive { get; set; }
     public string? RAM { get; set; }
     public string? CPU { get; set; }
     public int Price { get; set; }
     public int ColorRGB { get; set; }
+    public int StockQuantity { get; set; }
     public int SoldQuantity { get; set; }
     public int ViewQuantity { get; set; }
 }
@@ -57,6 +60,27 @@ public class CreateProductVariantDto
     public int Price { get; set; }
 
     public int ColorRGB { get; set; }
+
+    [Range(0, int.MaxValue)]
+    public int StockQuantity { get; set; } = 0;
+}
+
+public class UpdateProductVariantDto
+{
+    [Range(0, 100)]
+    public int Discount { get; set; } = 0;
+
+    public string? HardDrive { get; set; }
+    public string? RAM { get; set; }
+    public string? CPU { get; set; }
+
+    [Range(0, int.MaxValue)]
+    public int Price { get; set; }
+
+    public int ColorRGB { get; set; }
+
+    [Range(0, int.MaxValue)]
+    public int StockQuantity { get; set; } = 0;
 }
 
 public class ProductImageDto
@@ -183,4 +207,20 @@ public class UpdateProductDto
     
     // Optional new image files (will replace existing images)
     public List<IFormFile>? ImageFiles { get; set; } = new();
+}
+
+public class UpdateProductVariantStockDto
+{
+    public int StockQuantity { get; set; }
+}
+
+public class UpdateVariantStockDto
+{
+    public string VariantId { get; set; } = string.Empty;
+    public int StockQuantity { get; set; }
+}
+
+public class StockAdjustmentDto
+{
+    public int StockAdjustment { get; set; }
 } 

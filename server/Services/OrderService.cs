@@ -11,13 +11,17 @@ public class OrderService
     private readonly IMongoCollection<Product> _products;
     private readonly IMongoCollection<User> _users;
     private readonly IMongoCollection<Voucher> _vouchers;
+    private readonly ProductVariantService _productVariantService;
+    private readonly VoucherService _voucherService;
 
-    public OrderService(MongoDBService mongoDBService)
+    public OrderService(MongoDBService mongoDBService, ProductVariantService productVariantService, VoucherService voucherService)
     {
         _orders = mongoDBService.GetCollection<Order>("orders");
         _products = mongoDBService.GetCollection<Product>("products");
         _users = mongoDBService.GetCollection<User>("users");
         _vouchers = mongoDBService.GetCollection<Voucher>("vouchers");
+        _productVariantService = productVariantService;
+        _voucherService = voucherService;
     }
 
     // User endpoints
@@ -28,21 +32,8 @@ public class OrderService
 
         try
         {
-            // Validate user exists
-            // var user = await _users.Find(x => x.Id == userId).FirstOrDefaultAsync();
-            // if (user == null)
-            // {
-            //     throw new ArgumentException("User not found");
-            // }
             int discountAmount = 0;
 
-           
-            var voucher = await _vouchers.Find(x => x.Id == createOrderDto.VoucherId).FirstOrDefaultAsync();
-            if(voucher == null)
-            {
-                throw new ArgumentException("Voucher not found");
-            }   
-            
             // Validate and process items
             var orderItems = new List<OrderDetail>();
             var stockWarnings = new List<StockWarningDto>();
@@ -50,17 +41,18 @@ public class OrderService
 
             foreach (var item in createOrderDto.Items)
             {
-                var product = await _products.Find(x => x.Id == item.ProductId).FirstOrDefaultAsync();
-                if (product == null)
-                {
-                    throw new ArgumentException($"Product with ID {item.ProductId} not found");
-                }
-
-                // Check stock availability (using first variant for now, can be enhanced later)
-                var variant = product.Variants.FirstOrDefault();
+                // Get variant directly by ID
+                var variant = await _productVariantService.GetVariantByIdAsync(item.VariantId);
                 if (variant == null)
                 {
-                    throw new ArgumentException($"Product {product.Name} has no variants available");
+                    throw new ArgumentException($"Variant with ID {item.VariantId} not found");
+                }
+
+                // Get the product information
+                var product = await _products.Find(x => x.Id == variant.ProductId).FirstOrDefaultAsync();
+                if (product == null)
+                {
+                    throw new ArgumentException($"Product with ID {variant.ProductId} not found");
                 }
 
                 int availableStock = variant.StockQuantity;
@@ -89,19 +81,20 @@ public class OrderService
 
                     int itemTotal = unitPrice * allocatedQuantity;
                     totalPrice += itemTotal;
-
                     orderItems.Add(new OrderDetail
                     {
                         ProductId = product.Id!,
+                        VariantId = variant.Id,
                         Price = unitPrice,
                         Quantity = allocatedQuantity,
                         Total = itemTotal,
+                        Deadline = item.Deadline,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     });
 
-                    // Reserve stock (decrease stock quantity)
-                    await UpdateProductStockAsync(product.Id!, 0, -allocatedQuantity, session);
+                    // Reserve stock (decrease stock quantity) using the variant ID
+                    await UpdateVariantStockAsync(variant.Id, 0, -allocatedQuantity, session);
                 }
             }
 
@@ -109,22 +102,34 @@ public class OrderService
             {
                 throw new ArgumentException("No items could be processed due to stock unavailability");
             }
-
             // Apply voucher if provided
             string? voucherId = null;
-
-           if(totalPrice <= voucher.MinValue)
-            {
-                throw new ArgumentException("Total price is less than voucher minimum value");
-            }
-            voucherId = voucher.Id;
-            if (voucher.DiscountType.ToLower() == "percentage")
-            {
-                discountAmount = totalPrice * voucher.Discount / 100;
-            }
-            else
-            {
-                discountAmount = Math.Min(voucher.Discount, totalPrice);
+            if(createOrderDto.VoucherId != null){
+                var voucher = await _vouchers.Find(x => x.Id == createOrderDto.VoucherId).FirstOrDefaultAsync();
+                if(voucher == null)
+                {
+                    throw new ArgumentException("Voucher not found");
+                }   
+                
+                if(totalPrice < voucher.MinValue)
+                {
+                    throw new ArgumentException("Total price is less than voucher minimum value");
+                }
+                
+                if(voucher.Amount <= 0)
+                {
+                    throw new ArgumentException("Voucher is no longer available");
+                }
+                
+                voucherId = voucher.Id;
+                if (voucher.DiscountType.ToLower() == "percentage")
+                {
+                    discountAmount = totalPrice * voucher.Discount / 100;
+                }
+                else
+                {
+                    discountAmount = Math.Min(voucher.Discount, totalPrice);
+                }
             }
 
             int finalAmount = totalPrice - discountAmount;
@@ -144,6 +149,16 @@ public class OrderService
             };
 
             await _orders.InsertOneAsync(session, order);
+
+            // Decrease voucher amount if voucher was used
+            if (voucherId != null)
+            {
+                var voucherDecreased = await _voucherService.DecreaseVoucherAmountAsync(voucherId);
+                if (!voucherDecreased)
+                {
+                    throw new ArgumentException("Failed to update voucher amount. Voucher may have been exhausted.");
+                }
+            }
 
             await session.CommitTransactionAsync();
 
@@ -352,7 +367,7 @@ public class OrderService
             // Restore stock for cancelled orders
             foreach (var item in order.OrderDetails)
             {
-                await UpdateProductStockAsync(item.ProductId, 0, item.Quantity, session);
+                await UpdateVariantStockAsync(item.VariantId, 0, item.Quantity, session);
             }
         }
         else if (newStatus == OrderStatus.Delivered && oldStatus != OrderStatus.Delivered)
@@ -360,7 +375,7 @@ public class OrderService
             // Update sold quantity for delivered orders
             foreach (var item in order.OrderDetails)
             {
-                await UpdateProductStockAsync(item.ProductId, item.Quantity, 0, session);
+                await UpdateVariantStockAsync(item.VariantId, item.Quantity, 0, session);
             }
         }
         else if (oldStatus == OrderStatus.Cancelled && newStatus != OrderStatus.Cancelled)
@@ -368,20 +383,20 @@ public class OrderService
             // If reactivating a cancelled order, decrease stock again
             foreach (var item in order.OrderDetails)
             {
-                await UpdateProductStockAsync(item.ProductId, 0, -item.Quantity, session);
+                await UpdateVariantStockAsync(item.VariantId, 0, -item.Quantity, session);
             }
         }
     }
 
-    private async Task UpdateProductStockAsync(string productId, int soldQuantityChange, int stockQuantityChange, IClientSessionHandle session)
+    private async Task UpdateVariantStockAsync(string variantId, int soldQuantityChange, int stockQuantityChange, IClientSessionHandle session)
     {
-        var update = Builders<Product>.Update.Combine(
-            Builders<Product>.Update.Inc("variants.0.sold_quantity", soldQuantityChange),
-            Builders<Product>.Update.Inc("variants.0.stock_quantity", stockQuantityChange),
-            Builders<Product>.Update.Set("updated_at", DateTime.UtcNow)
-        );
-
-        await _products.UpdateOneAsync(session, x => x.Id == productId, update);
+        // Get the variant information
+        var variant = await _productVariantService.GetVariantByIdAsync(variantId);
+        
+        if (variant != null)
+        {
+            await _productVariantService.UpdateProductStockAsync(variant.ProductId, variant.Id, soldQuantityChange, stockQuantityChange);
+        }
     }
 
     private FilterDefinition<Order> BuildAdminOrderFilter(OrderFilterDto request)
@@ -466,6 +481,7 @@ public class OrderService
                 items.Add(new OrderItemDto
                 {
                     ProductId = detail.ProductId,
+                    VariantId = detail.VariantId,
                     ProductName = product.Name,
                     ProductThumbnail = product.Thumbnail,
                     Price = detail.Price,
@@ -507,10 +523,12 @@ public class OrderService
             var product = await _products.Find(x => x.Id == detail.ProductId).FirstOrDefaultAsync();
             if (product != null)
             {
-                var currentStock = product.Variants.FirstOrDefault()?.StockQuantity ?? 0;
+                var variant = await _productVariantService.GetVariantByIdAsync(detail.VariantId);
+                var currentStock = variant?.StockQuantity ?? 0;
                 items.Add(new AdminOrderItemDto
                 {
                     ProductId = detail.ProductId,
+                    VariantId = detail.VariantId,
                     ProductName = product.Name,
                     ProductThumbnail = product.Thumbnail,
                     ProductSlug = product.Slug,
