@@ -19,6 +19,26 @@ builder.Services.Configure<MongoDBSettings>(
 builder.Services.Configure<CloudinarySettings>(
     builder.Configuration.GetSection("Cloudinary"));
 
+// Add CORS services
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAllOrigins",
+        policy =>
+        {
+            policy.AllowAnyOrigin()
+                  .AllowAnyMethod()
+                  .AllowAnyHeader();
+        });
+    
+    options.AddPolicy("AllowSpecificOrigins",
+        policy =>
+        {
+            policy.WithOrigins("*")
+                  .AllowAnyMethod()
+                  .AllowAnyHeader()
+        });
+});
+
 // Add MongoDB service
 builder.Services.AddSingleton<MongoDBService>();
 
@@ -107,6 +127,16 @@ if (app.Environment.IsDevelopment())
 }
 
 // app.UseHttpsRedirection();
+
+// Add CORS middleware
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors("AllowAllOrigins");
+}
+else
+{
+    app.UseCors("AllowSpecificOrigins");
+}
 
 // Add custom JWT middleware for user context
 app.UseMiddleware<JwtMiddleware>();
