@@ -29,13 +29,13 @@ builder.Services.AddCors(options =>
                   .AllowAnyMethod()
                   .AllowAnyHeader();
         });
-    
+
     options.AddPolicy("AllowSpecificOrigins",
         policy =>
         {
             policy.WithOrigins("*")
                   .AllowAnyMethod()
-                  .AllowAnyHeader()
+                  .AllowAnyHeader();
         });
 });
 
@@ -94,15 +94,15 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new OpenApiInfo 
-    { 
-        Title = "Toxos API", 
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Toxos API",
         Version = "v1",
         Description = "E-Commerce API with JWT Authentication"
     });
-    
+
     c.EnableAnnotations();
-    
+
     // Add JWT Authentication to Swagger
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -112,7 +112,7 @@ builder.Services.AddSwaggerGen(c =>
         Type = SecuritySchemeType.ApiKey,
         Scheme = "Bearer"
     });
-    
+
     // Add operation filter to selectively apply authentication
     c.OperationFilter<Toxos_V2.Middlewares.AuthorizeOperationFilter>();
 });
@@ -156,7 +156,7 @@ var summaries = new[]
 
 app.MapGet("/hello", () =>
 {
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
+    var forecast = Enumerable.Range(1, 5).Select(index =>
         new Hello
         (
             DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
@@ -176,11 +176,11 @@ app.MapGet("/test-db", async (MongoDBService mongoDBService) =>
         // Try to ping the database
         var pingCommand = new MongoDB.Bson.BsonDocument("ping", 1);
         await mongoDBService.Database.RunCommandAsync<MongoDB.Bson.BsonDocument>(pingCommand);
-        
+
         // Get database stats
         var statsCommand = new MongoDB.Bson.BsonDocument("dbStats", 1);
         var stats = await mongoDBService.Database.RunCommandAsync<MongoDB.Bson.BsonDocument>(statsCommand);
-        
+
         return Results.Ok(new
         {
             status = "Connected",

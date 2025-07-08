@@ -32,32 +32,23 @@ public class OrderService
 
         try
         {
-            int discountAmount = 0;
-
-            // Validate and process items
             var orderItems = new List<OrderDetail>();
             var stockWarnings = new List<StockWarningDto>();
-            int totalPrice = 0;
+
+            int requestedTotalPrice = 0;
+            int fulfilledTotalPrice = 0;
 
             foreach (var item in createOrderDto.Items)
             {
-                // Get variant directly by ID
                 var variant = await _productVariantService.GetVariantByIdAsync(item.VariantId);
-                if (variant == null)
-                {
-                    throw new ArgumentException($"Variant with ID {item.VariantId} not found");
-                }
+                if (variant == null) throw new ArgumentException($"Variant {item.VariantId} not found");
 
-                // Get the product information
                 var product = await _products.Find(x => x.Id == variant.ProductId).FirstOrDefaultAsync();
-                if (product == null)
-                {
-                    throw new ArgumentException($"Product with ID {variant.ProductId} not found");
-                }
+                if (product == null) throw new ArgumentException($"Product {variant.ProductId} not found");
 
-                int availableStock = variant.StockQuantity;
-                int allocatedQuantity = Math.Min(item.Quantity, availableStock);
-
+                int allocatedQuantity = Math.Min(item.Quantity, variant.StockQuantity);
+                requestedTotalPrice += variant.Price * item.Quantity;
+                fulfilledTotalPrice += variant.Price * allocatedQuantity;
                 if (allocatedQuantity < item.Quantity)
                 {
                     stockWarnings.Add(new StockWarningDto
@@ -65,76 +56,57 @@ public class OrderService
                         ProductId = product.Id!,
                         ProductName = product.Name,
                         RequestedQuantity = item.Quantity,
-                        AvailableStock = availableStock,
+                        AvailableStock = variant.StockQuantity,
                         AllocatedQuantity = allocatedQuantity
                     });
                 }
 
                 if (allocatedQuantity > 0)
                 {
-                    // Calculate price (apply discount if any)
-                    int unitPrice = variant.Price;
-                    if (variant.Discount > 0)
-                    {
-                        unitPrice = unitPrice - (unitPrice * variant.Discount / 100);
-                    }
-
-                    int itemTotal = unitPrice * allocatedQuantity;
-                    totalPrice += itemTotal;
                     orderItems.Add(new OrderDetail
                     {
                         ProductId = product.Id!,
                         VariantId = variant.Id,
-                        Price = unitPrice,
+                        Price = variant.Price,
                         Quantity = allocatedQuantity,
-                        Total = itemTotal,
+                        Total = variant.Price * allocatedQuantity,
                         Deadline = item.Deadline,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     });
 
-                    // Reserve stock (decrease stock quantity) using the variant ID
                     await UpdateVariantStockAsync(variant.Id, 0, -allocatedQuantity, session);
                 }
             }
 
             if (!orderItems.Any())
-            {
                 throw new ArgumentException("No items could be processed due to stock unavailability");
-            }
-            // Apply voucher if provided
+
+            // Apply voucher
+            int discountAmount = 0;
             string? voucherId = null;
-            if(createOrderDto.VoucherId != null){
+
+            if (!string.IsNullOrEmpty(createOrderDto.VoucherId))
+            {
                 var voucher = await _vouchers.Find(x => x.Id == createOrderDto.VoucherId).FirstOrDefaultAsync();
-                if(voucher == null)
-                {
-                    throw new ArgumentException("Voucher not found");
-                }   
-                
-                if(totalPrice < voucher.MinValue)
-                {
+                if (voucher == null) throw new ArgumentException("Voucher not found");
+
+                if (fulfilledTotalPrice < voucher.MinValue)
                     throw new ArgumentException("Total price is less than voucher minimum value");
-                }
-                
-                if(voucher.Amount <= 0)
-                {
+
+                if (voucher.Amount <= 0)
                     throw new ArgumentException("Voucher is no longer available");
-                }
-                
+
                 voucherId = voucher.Id;
-                if (voucher.DiscountType.ToLower() == "percentage")
+                discountAmount = voucher.DiscountType.ToLower() switch
                 {
-                    discountAmount = totalPrice * voucher.Discount / 100;
-                }
-                else
-                {
-                    discountAmount = Math.Min(voucher.Discount, totalPrice);
-                }
+                    "percentage" => fulfilledTotalPrice * voucher.Discount / 100,
+                    _ => Math.Min(voucher.Discount, fulfilledTotalPrice)
+                };
             }
 
-            int finalAmount = totalPrice - discountAmount;
+            int finalAmount = fulfilledTotalPrice - discountAmount;
 
-            // Create order
             var order = new Order
             {
                 TotalPrice = finalAmount,
@@ -147,17 +119,13 @@ public class OrderService
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
-
             await _orders.InsertOneAsync(session, order);
 
-            // Decrease voucher amount if voucher was used
             if (voucherId != null)
             {
-                var voucherDecreased = await _voucherService.DecreaseVoucherAmountAsync(voucherId);
-                if (!voucherDecreased)
-                {
+                var updated = await _voucherService.DecreaseVoucherAmountAsync(voucherId);
+                if (!updated)
                     throw new ArgumentException("Failed to update voucher amount. Voucher may have been exhausted.");
-                }
             }
 
             await session.CommitTransactionAsync();
@@ -165,9 +133,9 @@ public class OrderService
             return new OrderCreationResponseDto
             {
                 OrderId = order.Id!,
-                TotalPrice = totalPrice,
+                TotalPrice = finalAmount,
                 DiscountAmount = discountAmount,
-                FinalAmount = finalAmount,
+                FinalAmount = requestedTotalPrice,
                 Status = order.Status,
                 Message = stockWarnings.Any() ? "Order created with stock limitations" : "Order created successfully",
                 StockWarnings = stockWarnings.Any() ? stockWarnings : null
@@ -179,6 +147,7 @@ public class OrderService
             throw;
         }
     }
+
 
     public async Task<PaginatedResponse<UserOrderDto>> GetUserOrdersAsync(string userId, PaginationRequest request)
     {
@@ -392,7 +361,7 @@ public class OrderService
     {
         // Get the variant information
         var variant = await _productVariantService.GetVariantByIdAsync(variantId);
-        
+
         if (variant != null)
         {
             await _productVariantService.UpdateProductStockAsync(variant.ProductId, variant.Id, soldQuantityChange, stockQuantityChange);
@@ -468,8 +437,8 @@ public class OrderService
     private async Task<OrderDto> MapToOrderDtoAsync(Order order)
     {
         var user = await _users.Find(x => x.Id == order.UserId).FirstOrDefaultAsync();
-        var voucher = !string.IsNullOrEmpty(order.VoucherId) 
-            ? await _vouchers.Find(x => x.Id == order.VoucherId).FirstOrDefaultAsync() 
+        var voucher = !string.IsNullOrEmpty(order.VoucherId)
+            ? await _vouchers.Find(x => x.Id == order.VoucherId).FirstOrDefaultAsync()
             : null;
 
         var items = new List<OrderItemDto>();
@@ -513,8 +482,8 @@ public class OrderService
     private async Task<AdminOrderDto> MapToAdminOrderDtoAsync(Order order)
     {
         var user = await _users.Find(x => x.Id == order.UserId).FirstOrDefaultAsync();
-        var voucher = !string.IsNullOrEmpty(order.VoucherId) 
-            ? await _vouchers.Find(x => x.Id == order.VoucherId).FirstOrDefaultAsync() 
+        var voucher = !string.IsNullOrEmpty(order.VoucherId)
+            ? await _vouchers.Find(x => x.Id == order.VoucherId).FirstOrDefaultAsync()
             : null;
 
         var items = new List<AdminOrderItemDto>();
@@ -559,4 +528,4 @@ public class OrderService
             UpdatedAt = order.UpdatedAt
         };
     }
-} 
+}

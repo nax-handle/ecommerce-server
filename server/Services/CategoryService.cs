@@ -7,10 +7,12 @@ namespace Toxos_V2.Services;
 public class CategoryService
 {
     private readonly IMongoCollection<Category> _categories;
+    private readonly CloudinaryFileUploadService _fileUploadService;
 
-    public CategoryService(MongoDBService mongoDBService)
+    public CategoryService(MongoDBService mongoDBService, CloudinaryFileUploadService fileUploadService)
     {
         _categories = mongoDBService.GetCollection<Category>("categories");
+        _fileUploadService = fileUploadService;
     }
 
     public async Task<List<CategoryDto>> GetAllCategoriesAsync()
@@ -43,10 +45,15 @@ public class CategoryService
         {
             throw new ArgumentException("Category with this name already exists");
         }
-
+        var imagePaths = "";
+        if (createCategoryDto.ThumbnailFile != null)
+        {
+            imagePaths = await _fileUploadService.UploadThumbnailAsync(createCategoryDto.ThumbnailFile);
+        }
         var category = new Category
         {
             Name = createCategoryDto.Name,
+            Image = imagePaths,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -69,7 +76,7 @@ public class CategoryService
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         var result = await _categories.UpdateOneAsync(x => x.Id == id, updateDefinition);
-        
+
         if (result.MatchedCount == 0)
         {
             return null;
@@ -101,4 +108,4 @@ public class CategoryService
             UpdatedAt = category.UpdatedAt
         };
     }
-} 
+}
